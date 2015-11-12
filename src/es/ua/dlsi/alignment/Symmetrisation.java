@@ -23,17 +23,27 @@ package es.ua.dlsi.alignment;
 
 import es.ua.dlsi.utils.CmdLineParser;
 import es.ua.dlsi.utils.Pair;
+import java.io.BufferedReader;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 /**
  *
  * @author miquel
  */
-public class Symetrisation {
+public class Symmetrisation {
     
     /**
      * Symetrisation method which produces, as a result, the intersection of the
@@ -184,4 +194,149 @@ public class Symetrisation {
         
         return currentpoints;
     }
+    
+    static public Set<Integer>[] ReadGizaAsymetricAlignment(String ssentence, String aligninfo){
+        String[] step1=aligninfo.substring(0, aligninfo.length()-3).split(" \\}\\) ");
+        Set[] alignment=new Set[step1.length];
+        for(int i=1;i<step1.length;i++){
+            alignment[i-1]=null;
+            if(step1[i].lastIndexOf('{')!=step1[i].length()-1){
+                String[] pair=step1[i].split(" \\(\\{ ");
+                if (pair.length>1){
+                    String[] indexes=pair[1].split(" ");
+                    for(String index: indexes){
+                        if(alignment[i-1]==null){
+                            alignment[i-1]=new HashSet<Integer>();
+                        }
+                        alignment[i-1].add(Integer.parseInt(index)-1);
+                    }
+                }
+            }
+        }
+        return alignment;
+    }
+    
+    
+    public static void main(String[] args) {
+        CmdLineParser parser = new CmdLineParser();
+        CmdLineParser.Option os2tfile = parser.addStringOption("s2t");
+        CmdLineParser.Option ot2sfile = parser.addStringOption("t2s");
+        CmdLineParser.Option osym = parser.addStringOption('s',"symmetrisation");
+        CmdLineParser.Option ooutput = parser.addStringOption('o',"output");
+        CmdLineParser.Option ohelp = parser.addBooleanOption('h',"help");
+        
+        try{
+            parser.parse(args);
+        }
+        catch(CmdLineParser.IllegalOptionValueException e){
+            System.err.println(e);
+            System.exit(-1);
+        }
+        catch(CmdLineParser.UnknownOptionException e){
+            System.err.println(e);
+            System.exit(-1);
+        }
+
+        String s2tfile=(String)parser.getOptionValue(os2tfile,null);
+        String t2sfile=(String)parser.getOptionValue(ot2sfile,null);
+        String sym=(String)parser.getOptionValue(osym,"gdfa");
+        String output=(String)parser.getOptionValue(ooutput,null);
+        boolean help=(Boolean)parser.getOptionValue(ohelp,false);
+
+        if(help){
+            System.err.println("This class must be called:\n");
+            System.err.println("java -cp es.ua.dlsi.alignment.Symmetrisation"+
+                    "--s2t <giza++_alignments_from_sl_to_tl> --t2s <giza++_alignments_from_sl_to_tl>"+
+                    "[-o <output_path>] [-s <symmetrisation_method>]\n" );
+            System.err.println("\t*giza++_alignments_from_sl_to_tl and giza++_alignments_from_tl_to_sl:"+
+                    " path to the files containing the assymetric alignments"
+                    + "produced by GIZA++. These files are usually named sl-tl.A3.final "
+                    + "or similar (depending on the model used to obtain the alignments).");
+            System.err.println("\t*output_path: path to the file containing the output. The output will"+
+                    " be produced in the same format than GIZA++ symmetrised alignments.");
+            System.err.println("\t*symmetrisation_method: the heuristic for symmetrising the alignments."+
+                    " One of the following values must be chosen: 'union', 'intersection', or 'gdfa'"+
+                    " (grow-diag-final-and, which is the default value");
+            System.exit(0);
+        }
+
+        
+        
+        BufferedReader sent_reader_s2t=null, sent_reader_t2s=null;
+        try {
+            sent_reader_s2t=new BufferedReader(new FileReader(s2tfile));
+        } catch (FileNotFoundException ex) {
+            System.err.println("Error while trying to open file "+s2tfile);
+            System.exit(-1);
+        }
+        try {
+            sent_reader_t2s=new BufferedReader(new FileReader(t2sfile));
+        } catch (FileNotFoundException ex) {
+            System.err.println("Error while trying to open file "+t2sfile);
+            System.exit(-1);
+        }
+        
+        int symindex=0;
+        
+        if(sym.equals("union")){
+            symindex=1;
+        }else if(sym.equals("intersection")){
+            symindex=2;
+        }else if(sym.equals("gdfa")){
+            symindex=3;
+        }
+        else{
+            System.err.println("Wrong alignment method "+sym);
+            System.exit(-1);
+        }
+
+        PrintWriter pw;
+        try{
+            pw=new PrintWriter(output);
+        }catch (NullPointerException ex){
+            System.err.println("No output file defined (option -o). Output redirected to standard output");
+            pw=new PrintWriter(System.out);
+        }catch (IOException ex){
+            System.err.println("Error while trying to open output file '"+output+"'. Output redirected to standard output");
+            pw=new PrintWriter(System.out);
+        }
+
+        
+        try{
+            while(sent_reader_s2t.readLine()!=null &&
+                    sent_reader_t2s.readLine()!=null){
+                
+                String sl_sent_s2t=sent_reader_s2t.readLine();
+                String alg_info_s2t=sent_reader_s2t.readLine();
+                Set<Integer>[] s2talignment=ReadGizaAsymetricAlignment(sl_sent_s2t, alg_info_s2t);
+                
+                String sl_sent_t2s=sent_reader_t2s.readLine();
+                String alg_info_t2s=sent_reader_t2s.readLine();
+                Set<Integer>[] t2salignment=ReadGizaAsymetricAlignment(sl_sent_t2s, alg_info_t2s);
+                
+                boolean[][] al=null;
+
+                switch(symindex){
+                    case 1: al=Symmetrisation.UnionSymal(s2talignment,t2salignment); break;
+                    case 2: al=Symmetrisation.IntersectionSymal(s2talignment,t2salignment); break;
+                    case 3: al=Symmetrisation.GrowDiagFinalAnd(s2talignment,t2salignment); break;
+                }
+                for(int row=0;row<al.length;row++){
+                    for(int col=0;col<al[row].length;col++){
+                        if(al[row][col]){
+                            pw.print(row);
+                            pw.print("-");
+                            pw.print(col);
+                            pw.print(" ");
+                        }
+                    }
+                }
+                pw.println();
+            }
+        }catch (IOException ex) {
+            System.err.println("Error while reading file "+t2sfile+" or "+s2tfile);
+        }
+        pw.close();
+    }
+    
 }
